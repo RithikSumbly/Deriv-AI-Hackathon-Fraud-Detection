@@ -5,6 +5,7 @@
 # Frontend
 streamlit>=1.28.0
 pyvis>=0.3.2
+python-dotenv>=1.0.0
 
 # Data & ML (backend)
 pandas>=2.0.0

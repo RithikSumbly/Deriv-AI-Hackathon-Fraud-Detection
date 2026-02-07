@@ -8,6 +8,16 @@ Run: streamlit run app.py  (from project root: streamlit run frontend/app.py)
 import sys
 from pathlib import Path
 
+# Load .env from project root so OPENAI_API_KEY / GOOGLE_API_KEY are set for LLM calls
+ROOT = Path(__file__).resolve().parent.parent
+_env_file = ROOT / ".env"
+if _env_file.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_file, override=True)
+    except ImportError:
+        pass
+
 import streamlit as st
 
 # Optional: pyvis for network graph (Network tab)
@@ -99,7 +109,6 @@ def _build_network_graph_html(
 
 
 # Backend: ensure project root is on path
-ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -119,11 +128,10 @@ st.title("Fraud Investigation Dashboard")
 st.caption("Internal use. Human-in-the-loop.")
 
 # -----------------------------------------------------------------------------
-# Load alerts once (used by sidebar and main)
+# Load alerts (fetch more so sort/filter have enough to work with)
 # -----------------------------------------------------------------------------
-alerts = get_alerts(limit=50)
-alert_by_id = {a["account_id"]: a for a in alerts}
-alert_options = [a["account_id"] for a in alerts]
+_alerts_raw = get_alerts(limit=500)
+alert_by_id = {a["account_id"]: a for a in _alerts_raw}
 
 # -----------------------------------------------------------------------------
 # Session state: selected alert, case status, investigator decision
@@ -131,57 +139,141 @@ alert_options = [a["account_id"] for a in alerts]
 # -----------------------------------------------------------------------------
 if "case_status" not in st.session_state:
     st.session_state.case_status = {}  # account_id -> "Under Review" | "Confirmed Fraud" | "Marked Legit" | "More Info Requested"
-if "selected_alert_id" not in st.session_state:
-    st.session_state.selected_alert_id = alert_options[0] if alert_options else None
-# Keep selected_alert_id valid when alert list changes or when options load
-if alert_options and (st.session_state.selected_alert_id not in alert_options):
-    st.session_state.selected_alert_id = alert_options[0]
-if not alert_options:
-    st.session_state.selected_alert_id = None
+# selected_alert_id is owned by the sidebar radio widget; we only read it (use .get so first run works)
 
 # Investigator decision = case status for the selected case (single source of truth)
 def _get_case_status(account_id: str) -> str:
     return st.session_state.case_status.get(account_id, "Under Review")
 
 # -----------------------------------------------------------------------------
-# Left sidebar: alert queue (bound to session_state.selected_alert_id)
+# Left sidebar: 3 dropdowns (Alerts, Verified fraud, Legit) — cases move when status changes
 # -----------------------------------------------------------------------------
+_PLACEHOLDER = "— No cases —"
+
 with st.sidebar:
-    st.header("Alert queue")
-    if not alerts:
+    st.markdown("### Cases")
+    st.markdown("")  # spacing
+    if not _alerts_raw:
         st.warning("No alerts.")
+        alerts_list = []
+        verified_fraud_list = []
+        legit_list = []
+        st.session_state.case_list = []
     else:
-        def badge_md(risk: str) -> str:
-            color = {"High": "#c62828", "Medium": "#e65100", "Low": "#2e7d32"}.get(risk, "#37474f")
-            return f'<span style="background:{color};color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">{risk}</span>'
+        # Partition by investigator decision
+        all_ids = [a["account_id"] for a in _alerts_raw]
+        alerts_list = [aid for aid in all_ids if _get_case_status(aid) in ("Under Review", "More Info Requested")]
+        verified_fraud_list = [aid for aid in all_ids if _get_case_status(aid) == "Confirmed Fraud"]
+        legit_list = [aid for aid in all_ids if _get_case_status(aid) == "Marked Legit"]
 
-        def format_option(account_id: str) -> str:
-            a = alert_by_id[account_id]
-            prob_pct = f"{a['fraud_probability']:.0%}"
-            line = (a["one_line_explanation"] or "")[:50] + ("…" if len(a.get("one_line_explanation", "") or "") > 50 else "")
-            return f"{a['risk_level']} | {prob_pct} | {line}"
+        # Sort state (persist across reruns)
+        if "sort_risk" not in st.session_state:
+            st.session_state.sort_risk = "High → Low"
+        if "sort_anomaly" not in st.session_state:
+            st.session_state.sort_anomaly = "High → Low"
 
-        # Radio writes to session_state.selected_alert_id so selection persists on any button click
-        chosen = st.radio(
-            "Select case (click to load)",
-            options=alert_options,
-            format_func=format_option,
-            index=alert_options.index(st.session_state.selected_alert_id) if st.session_state.selected_alert_id in alert_options else 0,
-            key="selected_alert_id",
-            label_visibility="collapsed",
-        )
-        st.session_state.selected_alert_id = chosen
+        def _toggle_risk():
+            st.session_state.sort_risk = "Low → High" if st.session_state.sort_risk == "High → Low" else "High → Low"
 
-        if chosen:
+        def _toggle_anomaly():
+            st.session_state.sort_anomaly = "Low → High" if st.session_state.sort_anomaly == "High → Low" else "High → Low"
+
+        # Filter in expander
+        with st.expander("Filter & sort", expanded=False):
+            filter_risk = st.selectbox("Risk filter", ["All", "High", "Medium", "Low"], index=0, key="filter_risk")
+            if filter_risk != "All":
+                alerts_list = [aid for aid in alerts_list if alert_by_id[aid].get("risk_level") == filter_risk]
+
+        # Toggle buttons always visible: click to flip ↓ ↔ ↑
+        risk_high_first = st.session_state.sort_risk == "High → Low"
+        anom_high_first = st.session_state.sort_anomaly == "High → Low"
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            st.button(
+                "↓ Risk" if risk_high_first else "↑ Risk",
+                key="btn_risk_toggle",
+                type="primary" if risk_high_first else "secondary",
+                on_click=_toggle_risk,
+                help="Risk: High→Low" if risk_high_first else "Risk: Low→High",
+            )
+        with tc2:
+            st.button(
+                "↓ Anomaly" if anom_high_first else "↑ Anomaly",
+                key="btn_anom_toggle",
+                type="primary" if anom_high_first else "secondary",
+                on_click=_toggle_anomaly,
+                help="Anomaly: High→Low" if anom_high_first else "Anomaly: Low→High",
+            )
+        risk_order = st.session_state.sort_risk
+        anomaly_order = st.session_state.sort_anomaly
+
+        risk_ord_high = {"High": 0, "Medium": 1, "Low": 2}
+        risk_ord_low = {"Low": 0, "Medium": 1, "High": 2}
+        def _sort_alerts(ids: list) -> list:
+            if not ids:
+                return ids
+            risk_ord = risk_ord_high if risk_order == "High → Low" else risk_ord_low
+            prob_sign = -1 if risk_order == "High → Low" else 1
+            anom_sign = -1 if anomaly_order == "High → Low" else 1
+            return sorted(
+                ids,
+                key=lambda aid: (
+                    risk_ord.get(alert_by_id[aid]["risk_level"], 3),
+                    prob_sign * alert_by_id[aid]["fraud_probability"],
+                    anom_sign * alert_by_id[aid].get("anomaly_score", 0),
+                ),
+            )
+        alerts_list = _sort_alerts(alerts_list)
+        verified_fraud_list = _sort_alerts(verified_fraud_list)
+        legit_list = _sort_alerts(legit_list)
+
+        def _set_selected(which: str):
+            key = f"dd_{which}"
+            if st.session_state.get(key) and st.session_state[key] != _PLACEHOLDER:
+                st.session_state.selected_alert_id = st.session_state[key]
+
+        # Case lists (main focus)
+        st.caption("Select a case")
+        opts_alerts = alerts_list if alerts_list else [_PLACEHOLDER]
+        idx_alerts = opts_alerts.index(st.session_state.get("selected_alert_id")) if st.session_state.get("selected_alert_id") in opts_alerts else 0
+        st.selectbox("Alerts", options=opts_alerts, index=idx_alerts, key="dd_alerts", on_change=lambda: _set_selected("alerts"))
+        opts_verified = verified_fraud_list if verified_fraud_list else [_PLACEHOLDER]
+        idx_verified = opts_verified.index(st.session_state.get("selected_alert_id")) if st.session_state.get("selected_alert_id") in opts_verified else 0
+        st.selectbox("Verified fraud", options=opts_verified, index=idx_verified, key="dd_verified", on_change=lambda: _set_selected("verified"))
+        opts_legit = legit_list if legit_list else [_PLACEHOLDER]
+        idx_legit = opts_legit.index(st.session_state.get("selected_alert_id")) if st.session_state.get("selected_alert_id") in opts_legit else 0
+        st.selectbox("Legit", options=opts_legit, index=idx_legit, key="dd_legit", on_change=lambda: _set_selected("legit"))
+
+        # Ordered list for Next case / Previous case navigation
+        st.session_state.case_list = alerts_list + verified_fraud_list + legit_list
+
+        # Initial selection
+        current = st.session_state.get("selected_alert_id")
+        if not current or current not in (alerts_list + verified_fraud_list + legit_list):
+            first = (alerts_list or [])[0] if alerts_list else (verified_fraud_list or [])[0] if verified_fraud_list else (legit_list or [])[0] if legit_list else None
+            if first:
+                st.session_state.selected_alert_id = first
+
+        # Selected summary — compact
+        chosen = st.session_state.get("selected_alert_id")
+        if chosen and chosen in alert_by_id:
             sel = alert_by_id[chosen]
             st.divider()
-            st.markdown("**Selected alert**")
-            st.markdown(badge_md(sel["risk_level"]) + f" **{sel['fraud_probability']:.0%}** fraud probability", unsafe_allow_html=True)
-            st.caption(sel["one_line_explanation"])
-            st.metric("Open alerts", len([a for a in alerts if a.get("risk_level") == "High"]))
+            risk_color = {"High": "#c62828", "Medium": "#e65100", "Low": "#2e7d32"}.get(sel["risk_level"], "#37474f")
+            st.markdown(
+                f"<span style='font-size:0.85rem;'>Selected</span> "
+                f"<span style='background:{risk_color};color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;'>{sel['risk_level']}</span> "
+                f"<span style='font-size:0.85rem;'>{sel['fraud_probability']:.0%}</span>",
+                unsafe_allow_html=True,
+            )
+            expl = (sel.get("one_line_explanation") or "")[:55] + "…" if len(sel.get("one_line_explanation") or "") > 55 else (sel.get("one_line_explanation") or "")
+            st.caption(expl)
+
+    alerts = _alerts_raw  # for rest of app (metrics etc.)
+    alert_options = [a["account_id"] for a in _alerts_raw]
 
 # Use session state for selected case everywhere (persists across reruns)
-selected_id = st.session_state.selected_alert_id
+selected_id = st.session_state.get("selected_alert_id")
 
 # -----------------------------------------------------------------------------
 # Main area: case header + case details (live for selected alert)
@@ -195,7 +287,20 @@ if selected_id:
     header_col1, header_col2, header_col3 = st.columns([2, 1, 2])
     with header_col1:
         st.markdown(f"**Account ID**  \n{selected_id}")
-        st.markdown(f"**Status**  \n{status}")
+        # Status: green for Legit, red for Verified fraud, default for Under Review / More Info
+        if status == "Marked Legit":
+            status_color = "#2e7d32"
+            status_label = "Legit"
+        elif status == "Confirmed Fraud":
+            status_color = "#c62828"
+            status_label = "Verified fraud"
+        else:
+            status_color = "inherit"
+            status_label = status
+        st.markdown(
+            f"**Status**  \n<span style='color:{status_color}; font-weight:600;'>{status_label}</span>",
+            unsafe_allow_html=True,
+        )
     with header_col2:
         # Risk score with color indicator (0-100 scale)
         risk_pct = alert["fraud_probability"] * 100
@@ -211,7 +316,7 @@ if selected_id:
         )
     with header_col3:
         st.markdown("**Actions**")
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        btn_col1, btn_col2, btn_col3, btn_next = st.columns([1, 1, 1, 1])
         with btn_col1:
             if st.button("Confirm Fraud", key="btn_confirm_fraud"):
                 st.session_state.case_status[selected_id] = "Confirmed Fraud"
@@ -221,6 +326,18 @@ if selected_id:
         with btn_col3:
             if st.button("Request More Info", key="btn_more_info"):
                 st.session_state.case_status[selected_id] = "More Info Requested"
+        with btn_next:
+            case_list = st.session_state.get("case_list") or []
+            if case_list and len(case_list) > 0:
+                try:
+                    idx = case_list.index(selected_id)
+                    next_idx = (idx + 1) % len(case_list)
+                    next_id = case_list[next_idx]
+                except ValueError:
+                    next_id = case_list[0] if case_list else selected_id
+                if st.button("Next case →", key="btn_next_case", help="Go to next case in list"):
+                    st.session_state.selected_alert_id = next_id
+                    st.rerun()
     st.divider()
 
     # ---------- Case details ----------
@@ -237,15 +354,17 @@ if selected_id:
     # ---------- AI Explanation panel (most readable section) ----------
     st.divider()
     st.markdown("---")
+    def _escape(s: str) -> str:
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     st.markdown(
-        '<p style="font-size:1.35rem; font-weight:600; color:#1a1a1a; margin-bottom:0.5rem;">Why this account was flagged</p>',
+        '<p style="font-size:1.35rem; font-weight:600; color:#e8e8e8; margin-bottom:0.5rem;">Why this account was flagged</p>',
         unsafe_allow_html=True,
     )
     st.markdown("")  # spacing
     risk_factors = alert.get("risk_factors") or [alert.get("one_line_explanation", "Activity was flagged for review.")]
-    bullets_html = "<br>".join(f"• {f}" for f in risk_factors).replace("<", "&lt;").replace(">", "&gt;")
+    bullets_html = "<br>".join("• " + _escape(str(f)) for f in risk_factors)
     st.markdown(
-        f'<div style="line-height:1.85; font-size:1.05rem; margin:0.5rem 0;">{bullets_html}</div>',
+        f'<div style="line-height:1.85; font-size:1.05rem; margin:0.5rem 0; color:#e0e0e0;">{bullets_html}</div>',
         unsafe_allow_html=True,
     )
     st.markdown("")
@@ -265,7 +384,7 @@ if selected_id:
         conf_color = "#2e7d32"
     st.markdown(
         f'<p style="margin-top:1rem; margin-bottom:0.25rem; font-weight:600; color:{conf_color};">{confidence_label}</p>'
-        f'<p style="margin:0; font-size:0.95rem; color:#555;">{confidence_note}</p>',
+        f'<p style="margin:0; font-size:0.95rem; color:#b0b0b0;">{confidence_note}</p>',
         unsafe_allow_html=True,
     )
     st.markdown("---")

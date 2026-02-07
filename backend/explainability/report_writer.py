@@ -77,6 +77,12 @@ def _call_llm(prompt: str, system: str) -> str | None:
     return call_llm(system, prompt, temperature=0.2)
 
 
+def _call_llm_regulatory(prompt: str, system: str) -> tuple[str | None, str | None]:
+    """Returns (content, error_message) for regulatory report so we can show the real error."""
+    from .llm_client import call_llm_with_error
+    return call_llm_with_error(system, prompt, temperature=0.2)
+
+
 def _template_report(
     case_summary: str,
     evidence_points: list[Any],
@@ -233,7 +239,9 @@ def generate_regulatory_report(case_context_data: str, *, use_llm: bool = True) 
     """
     prompt = REGULATORY_REPORT_USER_TEMPLATE.format(case_context_data=case_context_data or "(No case data provided.)")
     if use_llm:
-        raw = _call_llm(prompt, REGULATORY_REPORT_SYSTEM)
+        raw, err = _call_llm_regulatory(prompt, REGULATORY_REPORT_SYSTEM)
+        if err:
+            return _llm_required_report_message(err)
         if raw:
             text = raw.strip()
             # Remove surrounding code blocks if present
@@ -246,17 +254,17 @@ def generate_regulatory_report(case_context_data: str, *, use_llm: bool = True) 
                 text = "\n".join(lines)
             if "## 1. Executive Summary" in text or "## 1. Executive summary" in text:
                 return text
-        # LLM required; no preset content
-        return _llm_required_report_message()
+        return _llm_required_report_message("Set GOOGLE_API_KEY or OPENAI_API_KEY in .env to generate this report.")
     return _regulatory_report_fallback(case_context_data)
 
 
-def _llm_required_report_message() -> str:
-    """When use_llm=True but LLM is unavailable; no preset content."""
-    return """# Investigation Report
+def _llm_required_report_message(error_detail: str = "") -> str:
+    """When use_llm=True but LLM is unavailable or failed; show error_detail if provided."""
+    msg = error_detail or "Set GOOGLE_API_KEY or OPENAI_API_KEY in .env to generate this report."
+    return f"""# Investigation Report
 
 ## 1. Executive Summary
-Set OPENAI_API_KEY (or OPENAI_BASE_URL) to generate this report. No preset content is returned.
+{msg}
 
 ## 2. Evidence Reviewed
 LLM is required for report generation.

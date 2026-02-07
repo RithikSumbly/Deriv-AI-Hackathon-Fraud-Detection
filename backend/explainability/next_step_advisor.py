@@ -62,9 +62,10 @@ def _format_indicators(indicators: list[str] | dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "(none provided)"
 
 
-def _call_llm(prompt: str, system: str) -> str | None:
-    from .llm_client import call_llm
-    return call_llm(system, prompt, temperature=0.2)
+def _call_llm(prompt: str, system: str) -> tuple[str | None, str | None]:
+    """Returns (content, error_message). Error is set when LLM is unavailable or fails."""
+    from .llm_client import call_llm_with_error
+    return call_llm_with_error(system, prompt, temperature=0.2)
 
 
 def _template_next_steps(indicators: list[str] | dict) -> dict[str, Any]:
@@ -124,7 +125,12 @@ def recommend_next_steps(
     prompt = USER_PROMPT_TEMPLATE.format(indicators_block=indicators_block)
 
     if use_llm:
-        raw = _call_llm(prompt, SYSTEM_PROMPT)
+        raw, err = _call_llm(prompt, SYSTEM_PROMPT)
+        if err:
+            return {
+                "next_steps": [err],
+                "rationale": "Fix the issue above (e.g. set GOOGLE_API_KEY or OPENAI_API_KEY in .env, or check key validity and network).",
+            }
         if raw:
             text = raw.strip()
             if "```json" in text:
@@ -139,10 +145,9 @@ def recommend_next_steps(
                     return out
             except json.JSONDecodeError:
                 pass
-        # LLM required; no preset content
         return {
-            "next_steps": ["Set OPENAI_API_KEY (or OPENAI_BASE_URL) to generate AI recommendations."],
-            "rationale": "LLM is required for next-step suggestions. No preset content is returned.",
+            "next_steps": ["Set GOOGLE_API_KEY or OPENAI_API_KEY in .env to generate AI recommendations."],
+            "rationale": "LLM is required for next-step suggestions.",
         }
 
     return _template_next_steps(risk_indicators)

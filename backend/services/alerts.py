@@ -11,10 +11,12 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ANOMALY_CSV = DATA_DIR / "anomaly_scores.csv"
 
 
-def _risk_level(prob: float) -> str:
-    if prob >= 0.6:
+def _risk_level(prob: float, anomaly: float = 0) -> str:
+    """Use combined score so anomaly_score can lift risk when fraud_prob is conservative."""
+    composite = 0.5 * prob + 0.5 * (anomaly if anomaly is not None else 0)
+    if composite >= 0.5:
         return "High"
-    if prob >= 0.3:
+    if composite >= 0.3:
         return "Medium"
     return "Low"
 
@@ -65,8 +67,11 @@ def get_alerts(limit: int = 50) -> list[dict]:
             if "account_id" not in df.columns or "fraud_probability" not in df.columns:
                 return _mock_alerts()
             default_timeline = _default_timeline_events()
-            df = df.head(limit * 2)
-            df["risk_level"] = df["fraud_probability"].apply(_risk_level)
+            df = df.head(limit * 4)
+            df["risk_level"] = df.apply(
+                lambda r: _risk_level(float(r["fraud_probability"]), float(r.get("anomaly_score", 0))),
+                axis=1,
+            )
             df["one_line_explanation"] = df.apply(_one_line_from_row, axis=1)
             df["risk_factors"] = df.apply(_risk_factors_from_row, axis=1)
             # Sort by risk descending: High first, then by fraud_probability desc

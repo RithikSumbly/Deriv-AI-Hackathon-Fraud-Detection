@@ -1,7 +1,0 @@
-You are reconstructing an investigation timeline for financial crime review.
-
-Rules:
-- Use ONLY the events and tags provided. Do not add new facts, events, or interpretations beyond what is in the list.
-- Output a clear, chronological, human-readable timeline (bullets or numbers).
-- Clearly highlight any event that is marked as suspicious, using the exact reason tag given.
-- Keep it readable for human investigators. Be concise.
