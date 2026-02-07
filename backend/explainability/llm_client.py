@@ -3,10 +3,30 @@ Shared LLM client: OpenAI-compatible API or Google Gemini.
 
 Uses OPENAI_API_KEY + OPENAI_BASE_URL for OpenAI, or GOOGLE_API_KEY for Gemini.
 Google API keys (AIza...) work with GOOGLE_API_KEY; the app will use Gemini.
+Retries on rate-limit errors (429, quota, RPM/TPM) with exponential backoff.
 """
 from __future__ import annotations
 
 import os
+import time
+
+
+def _is_rate_limit_error(err: str | None) -> bool:
+    """True if the error message indicates a rate limit or quota exhaustion."""
+    if not err:
+        return False
+    err_lower = err.lower()
+    return (
+        "429" in err
+        or "rate limit" in err_lower
+        or "quota" in err_lower
+        or "resource exhausted" in err_lower
+        or "rate_limit_exceeded" in err_lower
+        or "insufficient_quota" in err_lower
+        or "too many requests" in err_lower
+        or "rpm" in err_lower
+        or "tpm" in err_lower
+    )
 
 
 def call_llm(system: str, user: str, *, temperature: float = 0.2) -> str | None:
@@ -24,29 +44,39 @@ def call_llm_with_error(
     - If GOOGLE_API_KEY is set: use Google Gemini (google-generativeai).
     - Else if OPENAI_API_KEY or OPENAI_BASE_URL is set: use OpenAI client.
 
+    On rate-limit errors (429, quota, RPM/TPM), retries with exponential backoff.
+    LLM_RATE_LIMIT_RETRIES (default 3) controls max attempts; backoff 2s, 4s, 8s.
+
     Returns (response_text, error_message). On success: (text, None). On failure: (None, error_string).
-    When no API key is set, error_string is "Set GOOGLE_API_KEY or OPENAI_API_KEY in .env".
     """
-    # 1) Google Gemini: GOOGLE_API_KEY, or OPENAI_API_KEY if it looks like Google (AIza...)
     google_key = (
         os.environ.get("GOOGLE_API_KEY")
         or _maybe_google_key(os.environ.get("OPENAI_API_KEY"))
     )
-    if google_key:
-        out, err = _call_gemini(system, user, google_key, temperature)
-        if out is not None:
-            return (out, None)
-        return (None, err or "Set GOOGLE_API_KEY or OPENAI_API_KEY in .env")
-
-    # 2) OpenAI-compatible (OpenAI or proxy)
     api_key = os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("OPENAI_BASE_URL")
-    if not api_key and not base_url:
+    if google_key:
+        pass
+    elif not api_key and not base_url:
         return (None, "Set GOOGLE_API_KEY or OPENAI_API_KEY in .env")
-    out, err = _call_openai(system, user, api_key, base_url, temperature)
-    if out is not None:
-        return (out, None)
-    return (None, err or "OpenAI/LLM request failed.")
+    max_retries = max(1, int(os.environ.get("LLM_RATE_LIMIT_RETRIES", "3")))
+    last_err: str | None = None
+    for attempt in range(max_retries):
+        if google_key:
+            out, last_err = _call_gemini(system, user, google_key, temperature)
+            if last_err is None:
+                last_err = "Set GOOGLE_API_KEY or OPENAI_API_KEY in .env" if out is None else None
+        else:
+            out, last_err = _call_openai(system, user, api_key, base_url, temperature)
+            if out is None and last_err is None:
+                last_err = "OpenAI/LLM request failed."
+        if out is not None:
+            return (out, None)
+        if not _is_rate_limit_error(last_err):
+            return (None, last_err or "Unknown error")
+        if attempt < max_retries - 1:
+            time.sleep(2 ** (attempt + 1))
+    return (None, last_err or "Rate limit exceeded after retries.")
 
 
 def _maybe_google_key(key: str | None) -> str | None:
