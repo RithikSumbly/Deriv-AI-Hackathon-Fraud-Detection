@@ -1,0 +1,10 @@
+# Synthetic data generation, fraud model, and API
+pandas>=2.0.0
+numpy>=1.24.0
+lightgbm>=4.0.0
+shap>=0.43.0
+scikit-learn>=1.3.0
+# Optional: for Neo4j graph features (scripts/neo4j_graph_features.py)
+neo4j>=5.0.0
+# Optional: for LLM alert explanations (explainability/alert_explanation.py)
+openai>=1.0.0

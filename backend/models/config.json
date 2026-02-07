@@ -1,0 +1,6 @@
+{
+  "feature_names": ["declared_income_annual", "total_deposits_90d", "total_withdrawals_90d", "num_deposits_90d", "num_withdrawals_90d", "deposit_withdraw_cycle_days_avg", "vpn_usage_pct", "countries_accessed_count", "device_shared_count", "ip_shared_count", "account_age_days", "kyc_face_match_score", "deposits_vs_income_ratio"],
+  "decision_threshold": {"threshold": 0.05},
+  "anomaly_feature_names": ["declared_income_annual", "total_deposits_90d", "total_withdrawals_90d", "num_deposits_90d", "num_withdrawals_90d", "deposit_withdraw_cycle_days_avg", "vpn_usage_pct", "countries_accessed_count", "device_shared_count", "ip_shared_count", "account_age_days", "kyc_face_match_score", "deposits_vs_income_ratio"],
+  "anomaly_score_bounds": {"min": -0.14, "max": 0.07}
+}
