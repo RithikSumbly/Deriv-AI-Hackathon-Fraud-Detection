@@ -174,7 +174,7 @@ def run_pipeline(
     }
 
     if mode == "alert_creation":
-        delay = max(0.0, float(os.environ.get("AGENT_CALL_DELAY_SECONDS", "0")))
+        delay = max(0.0, float(os.environ.get("AGENT_CALL_DELAY_SECONDS", "6")))
 
         # Specialists in order (no orchestrator yet)
         result["transaction"], _ = _run_agent(

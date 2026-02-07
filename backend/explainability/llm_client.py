@@ -4,10 +4,12 @@ Shared LLM client: OpenAI-compatible API or Google Gemini.
 Uses OPENAI_API_KEY + OPENAI_BASE_URL for OpenAI, or GOOGLE_API_KEY for Gemini.
 Google API keys (AIza...) work with GOOGLE_API_KEY; the app will use Gemini.
 Retries on rate-limit errors (429, quota, RPM/TPM) with exponential backoff.
+Daily-quota errors are not retried (clear message returned).
 """
 from __future__ import annotations
 
 import os
+import re
 import time
 
 
@@ -27,6 +29,33 @@ def _is_rate_limit_error(err: str | None) -> bool:
         or "rpm" in err_lower
         or "tpm" in err_lower
     )
+
+
+def _is_daily_quota_error(err: str | None) -> bool:
+    """True if the error is a daily quota limit (retrying won't help until next day)."""
+    if not err:
+        return False
+    err_lower = err.lower()
+    return (
+        "perday" in err_lower
+        or "per day" in err_lower
+        or "daily" in err_lower
+        or "free_tier_requests" in err_lower
+        or "requestsperday" in err_lower
+    )
+
+
+def _parse_retry_after_ms(err: str | None) -> float | None:
+    """If the error says 'retry in X ms', return X (seconds). Otherwise None."""
+    if not err:
+        return None
+    match = re.search(r"retry\s+in\s+([\d.]+)\s*ms", err, re.I)
+    if match:
+        try:
+            return float(match.group(1)) / 1000.0
+        except ValueError:
+            pass
+    return None
 
 
 def call_llm(system: str, user: str, *, temperature: float = 0.2) -> str | None:
@@ -74,8 +103,17 @@ def call_llm_with_error(
             return (out, None)
         if not _is_rate_limit_error(last_err):
             return (None, last_err or "Unknown error")
+        if _is_daily_quota_error(last_err):
+            return (
+                None,
+                "Daily API quota reached (free tier). Try again tomorrow or check your plan: https://ai.google.dev/gemini-api/docs/rate-limits",
+            )
         if attempt < max_retries - 1:
-            time.sleep(2 ** (attempt + 1))
+            retry_sec = _parse_retry_after_ms(last_err)
+            if retry_sec is not None and retry_sec > 0:
+                time.sleep(min(retry_sec, 60.0))
+            else:
+                time.sleep(2 ** (attempt + 1))
     return (None, last_err or "Rate limit exceeded after retries.")
 
 
@@ -95,7 +133,7 @@ def _call_gemini(
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        model_name = os.environ.get("GOOGLE_MODEL", "gemini-2.5-flash")
+        model_name = os.environ.get("GOOGLE_MODEL", "gemini-2.5-flash-lite")
         prompt = f"{system}\n\n---\n\n{user}" if system else (user or "(no user message)")
         try:
             model = genai.GenerativeModel(model_name, system_instruction=system)

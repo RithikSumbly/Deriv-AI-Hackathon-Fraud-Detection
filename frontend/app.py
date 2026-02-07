@@ -119,7 +119,7 @@ from backend.services.feedback import add_decision, add_knowledge_pattern, get_s
 
 st.set_page_config(
     page_title="Fraud Investigation Dashboard",
-    page_icon="🔍",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -129,16 +129,23 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
-  /* Main content – gradient + subtle ambient depth */
+  /* Base app background */
   .stApp {
+    background: #0d1117;
+    min-height: 100vh;
+  }
+  /* Right side (main content) – diagonal gradient + soft amber & rose orbs */
+  main, [data-testid="stAppViewContainer"] > section, [data-testid="stAppViewContainer"] > div:last-child {
+    background: radial-gradient(ellipse 100% 70% at 15% 20%, rgba(251, 191, 36, 0.07) 0%, transparent 50%),
+                radial-gradient(ellipse 90% 60% at 90% 80%, rgba(244, 114, 182, 0.06) 0%, transparent 45%),
+                linear-gradient(145deg, #0f1419 0%, #171a1f 35%, #1c1917 70%, #141a22 100%);
+    min-height: 100vh;
+  }
+  /* Sidebar – previous colour: soft blue/green ambient gradient (as before right-side-only change) */
+  [data-testid="stSidebar"] {
     background: radial-gradient(ellipse 90% 60% at 75% 15%, rgba(56, 139, 253, 0.035) 0%, transparent 50%),
                 radial-gradient(ellipse 70% 50% at 15% 85%, rgba(46, 213, 115, 0.025) 0%, transparent 50%),
                 linear-gradient(165deg, #0d1117 0%, #161b22 45%, #1c2128 100%);
-    min-height: 100vh;
-  }
-  /* Sidebar – soft gradient, subtle border */
-  [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #161b22 0%, #1a1f26 50%, #21262d 100%);
     border-right: 1px solid rgba(48, 54, 61, 0.6);
   }
   [data-testid="stSidebar"] .stMarkdown { color: #e6edf3; }
@@ -162,11 +169,11 @@ st.markdown("""
   h1, h2, h3 { color: #e6edf3 !important; font-weight: 600 !important; }
   .hero-title {
     font-size: 2rem; font-weight: 700; color: #e6edf3;
-    letter-spacing: -0.03em; margin-bottom: 0.25rem !important;
+    letter-spacing: -0.03em; margin-top: 0; margin-bottom: 0.25rem !important;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   }
   .hero-sub {
-    font-size: 0.95rem; color: #8b949e; margin-bottom: 1.5rem !important;
+    font-size: 0.95rem; color: #8b949e; margin-top: 0; margin-bottom: 1.5rem !important;
     letter-spacing: 0.01em;
   }
   hr { border-color: rgba(48, 54, 61, 0.8) !important; opacity: 0.9; }
@@ -236,8 +243,10 @@ st.markdown("""
   .stSelectbox > div, [data-testid="stSelectbox"] > div {
     border-radius: 10px;
   }
-  /* Block container – gentle padding */
-  .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
+  /* Block container – enough top padding so "Internal use" and hero are not cut off */
+  .block-container { padding-top: 2.75rem; padding-bottom: 2rem; }
+  /* Main content view – extra top space to avoid clipping */
+  [data-testid="stAppViewContainer"] { padding-top: 0.75rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -245,8 +254,8 @@ st.markdown("""
 # Page title (hero) — logo is in sidebar
 # -----------------------------------------------------------------------------
 st.markdown(
-    '<p class="hero-title">🔍 Fraud Investigation Dashboard</p>'
-    '<p class="hero-sub">Internal use · Human-in-the-loop</p>',
+    '<p class="hero-title">🛡️ Fraud Investigation Dashboard</p>'
+    '<p class="hero-sub">🔒 Internal use · 👥 Human-in-the-loop</p>',
     unsafe_allow_html=True,
 )
 
@@ -312,7 +321,7 @@ with st.sidebar:
         # Filter and sort mode in expander
         if "sort_mode" not in st.session_state:
             st.session_state.sort_mode = "Risk (High → Low)"
-        with st.expander("Filter & sort", expanded=False):
+        with st.expander("⚙️ Filter & sort", expanded=False):
             filter_risk = st.selectbox("Risk filter", ["All", "High", "Medium", "Low"], index=0, key="filter_risk")
             if filter_risk != "All":
                 alerts_list = [aid for aid in alerts_list if alert_by_id[aid].get("risk_level") == filter_risk]
@@ -330,7 +339,7 @@ with st.sidebar:
         tc1, tc2 = st.columns(2)
         with tc1:
             st.button(
-                "↓ Risk" if risk_high_first else "↑ Risk",
+                ("🔴 ↓ Risk" if risk_high_first else "🔴 ↑ Risk"),
                 key="btn_risk_toggle",
                 type="primary" if risk_high_first and st.session_state.sort_mode == "Risk (High → Low)" else "secondary",
                 on_click=_toggle_risk,
@@ -338,7 +347,7 @@ with st.sidebar:
             )
         with tc2:
             st.button(
-                "↓ Anomaly" if anom_high_first else "↑ Anomaly",
+                ("🟠 ↓ Anomaly" if anom_high_first else "🟠 ↑ Anomaly"),
                 key="btn_anom_toggle",
                 type="primary" if anom_high_first and st.session_state.sort_mode == "Anomaly (High → Low)" else "secondary",
                 on_click=_toggle_anomaly,
@@ -385,7 +394,7 @@ with st.sidebar:
             if st.session_state.get(key) and st.session_state[key] != _PLACEHOLDER:
                 st.session_state.selected_alert_id = st.session_state[key]
 
-        st.markdown('<p class="section-label" style="margin-top:0.5rem;">Select a case</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-label" style="margin-top:0.5rem;">📌 Select a case</p>', unsafe_allow_html=True)
         opts_alerts = alerts_list if alerts_list else [_PLACEHOLDER]
         idx_alerts = opts_alerts.index(st.session_state.get("selected_alert_id")) if st.session_state.get("selected_alert_id") in opts_alerts else 0
         st.selectbox("Alerts", options=opts_alerts, index=idx_alerts, key="dd_alerts", on_change=lambda: _set_selected("alerts"))
@@ -543,10 +552,12 @@ if selected_id:
         return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
     def _agent_error_message(err: str) -> str:
-        """User-facing message for agent errors; rate-limit errors get a friendly line."""
+        """User-facing message for agent errors; rate-limit and quota get a friendly line."""
         if not err:
             return "Unknown error"
         err_lower = err.lower()
+        if "daily" in err_lower or "per day" in err_lower or "perday" in err_lower or "free_tier" in err_lower:
+            return "Daily API quota reached (free tier). Try again tomorrow or check your plan: https://ai.google.dev/gemini-api/docs/rate-limits"
         if any(x in err_lower or x in err for x in ("rate limit", "quota", "429", "resource exhausted")):
             return "Rate limit reached. Please try again in a minute."
         return err
@@ -655,14 +666,14 @@ if selected_id:
             unsafe_allow_html=True,
         )
     else:
-        st.markdown(
-            '<p style="font-size:0.85rem; color:#8b949e; margin:0.5rem 0 1rem 0;">30s summary: Run investigation to see summary.</p>',
-            unsafe_allow_html=True,
-        )
+        if st.button("Run investigation to see summary", key="btn_run_agents_30s", help="Run investigation agents to generate the 30s summary"):
+            with st.spinner("Running investigation agents…"):
+                st.session_state.agent_cache[selected_id] = run_pipeline(alert, "alert_creation")
+            st.rerun()
 
     # ---------- Evidence (tabbed): fed by specialist agents ----------
-    st.markdown('<p class="section-label" style="margin-top:1.75rem; margin-bottom:1rem;">Evidence</p>', unsafe_allow_html=True)
-    tab_tx, tab_geo, tab_id, tab_net, tab_similar = st.tabs(["Transactions", "Access & Geo", "Identity", "Network", "Similar Cases"])
+    st.markdown('<p class="section-label" style="margin-top:1.75rem; margin-bottom:1rem;">🔬 Evidence</p>', unsafe_allow_html=True)
+    tab_tx, tab_geo, tab_id, tab_net, tab_similar = st.tabs(["💳 Transactions", "🌍 Access & Geo", "🪪 Identity", "🔗 Network", "📂 Similar Cases"])
     tx_ag = agent_results.get("transaction") or {}
     geo_ag = agent_results.get("geo") or {}
     id_ag = agent_results.get("identity") or {}
@@ -856,8 +867,8 @@ def _mermaid_html(mermaid_code: str) -> str:
     )
 
 
-st.markdown('<p class="section-label">Timeline</p>', unsafe_allow_html=True)
-with st.expander("Chronological events", expanded=True):
+st.markdown('<p class="section-label">📅 Timeline</p>', unsafe_allow_html=True)
+with st.expander("📅 Chronological events", expanded=True):
     if selected_id:
         alert = alert_by_id.get(selected_id)
         events = (alert or {}).get("timeline_events") or []
@@ -876,7 +887,7 @@ with st.expander("Chronological events", expanded=True):
                 mermaid_code = _mermaid_timeline(events)
                 st.markdown("**Chronological events** (rule-based; suspicious events highlighted in red border)")
                 st.components.v1.html(_mermaid_html(mermaid_code), height=400)
-            with st.expander("Event list (text)", expanded=False):
+            with st.expander("📜 Event list (text)", expanded=False):
                 for ev in sorted(events, key=lambda e: e.get("timestamp", "")):
                     susp = " ⚠️ Suspicious" if ev.get("suspicious") else ""
                     st.markdown(f"- **{ev.get('timestamp', '')}** — {ev.get('event_type', '')} {ev.get('details', '')}{susp}")
@@ -891,7 +902,7 @@ def _escape_html(s: str) -> str:
 
 st.markdown("---")
 st.markdown(
-    '<p class="section-label">Recommended next steps</p>'
+    '<p class="section-label">💡 Recommended next steps</p>'
     '<p style="font-size:0.9rem; color:#8b949e; margin-bottom:0.75rem;">Suggestions to support your investigation—you decide what to do next.</p>',
     unsafe_allow_html=True,
 )
@@ -960,8 +971,8 @@ if selected_id:
         st.session_state.investigation_report is not None
         and st.session_state.investigation_report_account == selected_id
     )
-    st.markdown('<p class="section-label">Investigation report</p>', unsafe_allow_html=True)
-    if st.button("Generate Investigation Report", key="btn_generate_report"):
+    st.markdown('<p class="section-label">📋 Investigation report</p>', unsafe_allow_html=True)
+    if st.button("📋 Generate Investigation Report", key="btn_generate_report"):
         case_context = _build_case_context(
             selected_id, alert_for_report, _get_case_status(selected_id)
         )
@@ -980,7 +991,7 @@ else:
     has_report = False
     report_expanded = False
 
-with st.expander("📄 Report", expanded=report_expanded):
+with st.expander("📋 Report", expanded=report_expanded):
     if not selected_id:
         st.markdown('<p style="color:#8b949e;">Select a case from the sidebar to generate an investigation report.</p>', unsafe_allow_html=True)
     elif st.session_state.investigation_report and st.session_state.investigation_report_account == selected_id:
