@@ -19,6 +19,15 @@
 
 ---
 
+## Failure modes & safeguards
+
+- **If an LLM agent fails:** The pipeline degrades gracefully. Each Evidence tab shows a warning for the failed agent and still displays model-only metrics (fraud probability, anomaly score, risk level, one-line explanation, risk factors). Other tabs and the Orchestrator can still run with partial specialist outputs.
+- **If no API key:** The system falls back to model-only and template explanations. Alert explanation, report writer, next-step advisor, and timeline builder use template fallbacks so demos work without an LLM. The UI shows model scores and risk factors from the classifier and anomaly detector.
+- **If signals conflict:** The Orchestrator is instructed to use cautious, regulator-safe language and not to treat any single signal as proof of fraud. Optional: the orchestrator prompt can be extended to explicitly require stating when specialist findings conflict (e.g. in key_drivers or investigation_summary).
+- **Auto-resolve is conservative and reversible with audit log:** Only a suggestion is shown (“Consider dismissing as false positive?”) when pattern matches historical legitimate behavior; the investigator must click “Dismiss as false positive” and provide a **required** reason. Every decision (Confirm Fraud, Mark Legit, Dismiss as false positive) is stored in `backend/data/investigator_feedback.json` with account_id, decision, reason, timestamp, investigator_id, and model_version for audit. A **Reopen case** button moves a closed case (False Positive, Marked Legit, or Confirmed Fraud) back to Under Review; the reopen action is logged in the same feedback file for audit.
+
+---
+
 ## Feature importance (detection signals)
 
 The fraud classifier and anomaly detector use **13 features** per account. These drive both the score and the "why this account was flagged" explanations:
@@ -34,6 +43,38 @@ The fraud classifier and anomaly detector use **13 features** per account. These
 | `countries_accessed_count` | # distinct countries | High → fraud |
 | `account_age_days` | Days since signup | Often lower for fraud |
 | Others | Declared income, deposit/withdrawal amounts and counts | Supporting signals |
+
+---
+
+## Risk score and anomaly score
+
+**Risk score (in the UI)**  
+The case header **"Risk score"** is the **fraud probability** from the classifier, shown as a percentage (0–100%). For example, "Risk score 13%" means the classifier estimates a 13% likelihood of fraud based on patterns seen in training data.
+
+**Fraud probability**  
+- **Model:** LightGBM binary classifier on the 13 features (see table above).  
+- **Output:** Probability of fraud per account (0–1). Trained on labeled fraud/legit; an F1-optimal decision threshold is stored in `backend/models/config.json`.  
+- **Meaning:** "Looks like known fraud" — the model has seen similar patterns in training.  
+- **Details:** See `backend/models/FEATURE_IMPORTANCE.md`.
+- This score alone does not determine case outcomes; it is one input into investigator prioritisation and review.
+
+**Anomaly score**  
+- **Model:** Isolation Forest (unsupervised) on the same 13 features. Features are scaled with a StandardScaler fitted on legit-only data.  
+- **Output:** Score 0–1 (bounds in `config.json`). High = more unusual relative to normal (legit) behavior.  
+- **Meaning:** "Doesn’t look like normal" — can flag novel or rare patterns the classifier was not trained on.  
+- **Details:** See `backend/models/ANOMALY_DETECTION_README.md`.
+- High anomaly does not imply fraud by itself; it indicates deviation from historical norms and is reviewed in context.
+- Anomaly detection helps surface emerging fraud patterns that the supervised classifier has not yet been trained on, reducing blind spots.
+
+**Risk level (High / Medium / Low)**  
+Used for sorting and display. It combines both scores:
+
+- **Composite** = 0.5 × fraud_probability + 0.5 × anomaly_score  
+- **High** if composite ≥ 0.5  
+- **Medium** if composite ≥ 0.3  
+- **Low** otherwise  
+
+So a high anomaly score can raise the risk level even when fraud probability is moderate, and both scores feed into prioritisation in the dashboard. Risk level is used for **triage and ordering**, not automated enforcement.
 
 ---
 
