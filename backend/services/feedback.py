@@ -60,7 +60,7 @@ def add_decision(
     """
     Append one investigator decision for audit and future retrain.
     decision: "Confirmed Fraud" | "Marked Legit" | "False Positive"
-    When decision is Confirmed Fraud and feature_vector is provided, it is stored for similarity matching.
+    When decision is Confirmed Fraud, False Positive, or Marked Legit and feature_vector is provided, it is stored for similarity matching (e.g. outcome-informed priority).
     """
     records = _load()
     inv_id = investigator_id or os.environ.get("INVESTIGATOR_ID", "demo")
@@ -75,7 +75,7 @@ def add_decision(
         "investigator_id": inv_id,
         "model_version": model_version or MODEL_VERSION,
     }
-    if decision == "Confirmed Fraud" and feature_vector and len(feature_vector) > 0:
+    if decision in ("Confirmed Fraud", "False Positive", "Marked Legit") and feature_vector and len(feature_vector) > 0:
         rec["feature_vector"] = feature_vector
     records.append(rec)
     _save(records)
@@ -143,6 +143,28 @@ def get_similar_confirmed_count(
             return sum(1 for sv in stored if _cosine_sim(feature_vector, sv) >= similarity_threshold)
     # Fallback: same risk_level
     return sum(1 for r in confirmed if r.get("risk_level") == risk_level)
+
+
+def get_similar_false_positive_count(
+    risk_level: str,
+    *,
+    feature_vector: list[float] | None = None,
+    similarity_threshold: float = 0.7,
+) -> int:
+    """
+    Count previously dismissed false positives similar to this one.
+    If feature_vector is provided and we have stored vectors: use cosine similarity (>= threshold).
+    Else: fall back to same risk_level count.
+    """
+    records = _load()
+    fps = [r for r in records if r.get("decision") == "False Positive"]
+    if not fps:
+        return 0
+    if feature_vector and len(feature_vector) > 0:
+        stored = [r.get("feature_vector") for r in fps if isinstance(r.get("feature_vector"), list)]
+        if stored and len(stored[0]) == len(feature_vector):
+            return sum(1 for sv in stored if _cosine_sim(feature_vector, sv) >= similarity_threshold)
+    return sum(1 for r in fps if r.get("risk_level") == risk_level)
 
 
 def get_confirmed_fraud_count() -> int:

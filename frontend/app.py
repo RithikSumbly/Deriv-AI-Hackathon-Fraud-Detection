@@ -5,6 +5,7 @@ Layout: page title at top | left sidebar (alert queue) | main area (case details
 Alert queue: risk badge, fraud %, one-line AI explanation; sorted by risk; select to load case.
 Run: streamlit run app.py  (from project root: streamlit run frontend/app.py)
 """
+import os
 import sys
 from pathlib import Path
 
@@ -108,6 +109,60 @@ def _build_network_graph_html(
         return None
 
 
+def _build_network_graph_html_from_graph(graph: dict, height: int = 400) -> str | None:
+    """
+    Build interactive network from backend graph: nodes (primary_account, other_account, device, ip)
+    and edges (account -> device, account -> ip). Distinct visuals per type.
+    """
+    if not HAS_PYVIS:
+        return None
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    net = Network(
+        height=f"{height}px",
+        width="100%",
+        notebook=False,
+        heading="",
+        cdn_resources="remote",
+    )
+    net.barnes_hut(
+        gravity=0.2,
+        central_gravity=0.3,
+        spring_length=150,
+        spring_strength=0.05,
+        damping=0.09,
+    )
+    for n in nodes:
+        nid = n.get("id", "?")
+        label = n.get("label", nid)
+        ntype = n.get("type", "")
+        title = f"{ntype}\n{label}"
+        if ntype == "primary_account":
+            net.add_node(nid, label=label, title=title, color="#1a73e8", size=35, font={"size": 14})
+        elif ntype == "other_account":
+            net.add_node(nid, label=label, title=title, color="#f57c00", size=22, font={"size": 12})
+        elif ntype == "device":
+            net.add_node(nid, label=label, title=title, color="#78909c", size=25, font={"size": 12}, shape="box")
+        else:
+            net.add_node(nid, label=label, title=title, color="#78909c", size=25, font={"size": 12}, shape="dot")
+    for e in edges:
+        src = e.get("source")
+        tgt = e.get("target")
+        rel = e.get("relationship", "")
+        if src and tgt:
+            net.add_edge(src, tgt, title=rel)
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
+            tmp = f.name
+        net.save_graph(tmp)
+        html = Path(tmp).read_text()
+        Path(tmp).unlink(missing_ok=True)
+        return html
+    except Exception:
+        return None
+
+
 # Backend: ensure project root is on path
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -115,7 +170,9 @@ if str(ROOT) not in sys.path:
 from backend.agents import run_pipeline, run_knowledge_capture, run_visualization_agent
 from backend.explainability.visualization_tool import spec_to_mermaid
 from backend.services.alerts import get_alerts
+from backend.services.evidence import get_transactions, get_geo_activity, get_identity_signals, get_network_signals
 from backend.services.feedback import add_decision, add_knowledge_pattern, get_similar_confirmed_count, has_false_positive_history
+from backend.services.network import get_account_network
 
 st.set_page_config(
     page_title="Fraud Investigation Dashboard",
@@ -123,6 +180,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Apply API keys from session state to os.environ (UI override for hosting)
+if "api_key_google" not in st.session_state:
+    st.session_state.api_key_google = ""
+if "api_key_openai" not in st.session_state:
+    st.session_state.api_key_openai = ""
+if st.session_state.get("api_key_google", "").strip():
+    os.environ["GOOGLE_API_KEY"] = st.session_state.api_key_google.strip()
+if st.session_state.get("api_key_openai", "").strip():
+    os.environ["OPENAI_API_KEY"] = st.session_state.api_key_openai.strip()
 
 # -----------------------------------------------------------------------------
 # Global styles (smooth dark theme, refined cards, typography)
@@ -177,11 +244,14 @@ st.markdown("""
     letter-spacing: 0.01em;
   }
   hr { border-color: rgba(48, 54, 61, 0.8) !important; opacity: 0.9; }
-  /* Buttons – smooth radius, clear hover */
+  /* Buttons – smooth radius, clear hover, no awkward wrap; action row buttons fill column */
   .stButton > button {
     border-radius: 12px;
     font-weight: 600;
     transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    white-space: nowrap;
+    min-width: min(100%, 8rem);
+    width: 100%;
   }
   .stButton > button:hover {
     transform: translateY(-2px);
@@ -287,6 +357,23 @@ with st.sidebar:
     if _logo_path.exists():
         st.image(str(_logo_path), use_container_width=True)
         st.markdown("")  # spacing
+    with st.expander("API keys", expanded=False):
+        st.caption("Set your API key to enable AI features (agents, reports, next steps). Keys are not stored on the server.")
+        st.text_input(
+            "Google (Gemini) API key",
+            type="password",
+            key="api_key_google",
+            placeholder="AIza...",
+        )
+        st.text_input(
+            "OpenAI API key",
+            type="password",
+            key="api_key_openai",
+            placeholder="sk-...",
+        )
+        if (st.session_state.get("api_key_google", "").strip() or
+                st.session_state.get("api_key_openai", "").strip()):
+            st.caption("Using key(s) from form (overrides .env).")
     st.markdown(
         '<p style="font-size:1.1rem; font-weight:700; color:#e6edf3; margin-bottom:0.5rem;">Cases</p>'
         '<p style="font-size:0.8rem; color:#8b949e; margin-bottom:1rem;">Filter, sort, and select a case</p>',
@@ -363,16 +450,16 @@ with st.sidebar:
             if not ids:
                 return ids
             if st.session_state.sort_mode == "Outcome-informed (Learning)":
-                return sorted(
-                    ids,
-                    key=lambda aid: (
-                        -get_similar_confirmed_count(
-                            alert_by_id[aid].get("risk_level", "Low"),
-                            feature_vector=alert_by_id[aid].get("feature_vector"),
-                        ),
-                        -alert_by_id[aid]["fraud_probability"],
-                    ),
-                )
+                def _outcome_key(aid):
+                    a = alert_by_id[aid]
+                    pri = a.get("outcome_adjusted_priority")
+                    if pri is not None:
+                        return (-pri, -a["fraud_probability"])
+                    return (
+                        -get_similar_confirmed_count(a.get("risk_level", "Low"), feature_vector=a.get("feature_vector")),
+                        -a["fraud_probability"],
+                    )
+                return sorted(ids, key=_outcome_key)
             risk_ord = risk_ord_high if risk_order == "High → Low" else risk_ord_low
             prob_sign = -1 if risk_order == "High → Low" else 1
             anom_sign = -1 if anomaly_order == "High → Low" else 1
@@ -425,6 +512,12 @@ with st.sidebar:
             sel = alert_by_id[chosen]
             risk_color = {"High": "#c62828", "Medium": "#e65100", "Low": "#2e7d32"}.get(sel["risk_level"], "#37474f")
             expl = (sel.get("one_line_explanation") or "")[:60] + "…" if len(sel.get("one_line_explanation") or "") > 60 else (sel.get("one_line_explanation") or "")
+            outcome_expl = (sel.get("outcome_priority_explanation") or "").strip()
+            if outcome_expl and outcome_expl != "No outcome-based adjustment.":
+                _safe = outcome_expl.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+                outcome_line = f'<p style="margin:0.35rem 0 0; font-size:0.75rem; color:#79c0ff;">{_safe}</p>'
+            else:
+                outcome_line = ""
             st.markdown(
                 f'<div class="fraud-card" style="margin-top:1rem; padding:1rem;">'
                 f'<p class="fraud-card-title">Selected case</p>'
@@ -432,6 +525,7 @@ with st.sidebar:
                 f'<span style="background:{risk_color};color:white;padding:3px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">{sel["risk_level"]}</span> '
                 f'<span style="font-size:0.9rem; color:#8b949e;">{sel["fraud_probability"]:.0%}</span>'
                 f'<p style="margin:0.5rem 0 0; font-size:0.8rem; color:#8b949e; line-height:1.4;">{expl}</p>'
+                f'{outcome_line}'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -477,32 +571,36 @@ if selected_id:
         unsafe_allow_html=True,
     )
     st.markdown('<p class="fraud-card-title" style="margin-bottom:0.5rem;">Actions</p>', unsafe_allow_html=True)
-    btn_col1, btn_col2, btn_col3, btn_col4, btn_next = st.columns(5)
     def _on_case_close(decision: str, reason: str = ""):
         add_decision(selected_id, decision, reason=reason, risk_level=alert["risk_level"], fraud_probability=alert["fraud_probability"], anomaly_score=alert.get("anomaly_score"), feature_vector=alert.get("feature_vector"))
         pattern = run_knowledge_capture(alert, decision, reason)
         if pattern and "_error" not in pattern:
             add_knowledge_pattern(selected_id, pattern)
 
-    with btn_col1:
+    # Row 1: three equal columns
+    act_a, act_b, act_c = st.columns(3)
+    with act_a:
         if st.button("Confirm Fraud", key="btn_confirm_fraud"):
             st.session_state.case_status[selected_id] = "Confirmed Fraud"
             _on_case_close("Confirmed Fraud", "")
             st.rerun()
-    with btn_col2:
+    with act_b:
         if st.button("Mark Legit", key="btn_mark_legit"):
             st.session_state.case_status[selected_id] = "Marked Legit"
             _on_case_close("Marked Legit", "")
             st.rerun()
-    with btn_col3:
+    with act_c:
         if st.button("Request More Info", key="btn_more_info"):
             st.session_state.case_status[selected_id] = "More Info Requested"
             st.rerun()
-    with btn_col4:
-        if status != "False Positive" and st.button("Dismiss as false positive", key="btn_dismiss_fp", help="Mark as false positive and record reason for audit"):
+
+    # Row 2: three equal columns
+    act_d, act_e, act_f = st.columns(3)
+    with act_d:
+        if status != "False Positive" and st.button("Dismiss (false positive)", key="btn_dismiss_fp", help="Mark as false positive and record reason for audit"):
             st.session_state.show_fp_reason = True
             st.rerun()
-    with btn_next:
+    with act_e:
         case_list = st.session_state.get("case_list") or []
         if case_list and len(case_list) > 0:
             try:
@@ -514,13 +612,29 @@ if selected_id:
             if st.button("Next case →", key="btn_next_case", help="Go to next case in list"):
                 st.session_state.selected_alert_id = next_id
                 st.rerun()
-    # Run investigation agents (on demand)
-    if st.button("Run investigation agents", key="btn_run_agents", help="Run Transaction, Identity, Geo, Network, Outcome Similarity and Orchestrator agents for this case"):
-        with st.spinner("Running investigation agents…"):
-            st.session_state.agent_cache[selected_id] = run_pipeline(alert, "alert_creation")
-        st.rerun()
+    with act_f:
+        if st.button("Run investigation agents", key="btn_run_agents", help="Run Transaction, Identity, Geo, Network, Outcome Similarity and Orchestrator agents for this case"):
+            with st.spinner("Running investigation agents…"):
+                st.session_state.agent_cache[selected_id] = run_pipeline(alert, "alert_creation")
+            st.rerun()
+
     if not agent_results:
         st.caption("Click **Run investigation agents** above to see AI risk summary, key drivers, and Evidence tab content.")
+
+    # Reopen case (when status is closed) — one button, same visual weight as row above
+    if status in ("False Positive", "Marked Legit", "Confirmed Fraud"):
+        if st.button("Reopen case", key="btn_reopen_case", help="Move case back to Under Review; action is logged for audit"):
+            add_decision(
+                selected_id,
+                "Reopened",
+                reason="Moved back to Under Review",
+                risk_level=alert.get("risk_level"),
+                fraud_probability=alert.get("fraud_probability"),
+                anomaly_score=alert.get("anomaly_score"),
+                feature_vector=alert.get("feature_vector"),
+            )
+            st.session_state.case_status[selected_id] = "Under Review"
+            st.rerun()
     # Dismiss as false positive: required reason (audit trail) — regulator-safe
     if st.session_state.get("show_fp_reason") and selected_id and status != "False Positive":
         with st.expander("Record reason for false positive (required for audit)", expanded=True):
@@ -575,6 +689,9 @@ if selected_id:
         f'<p style="font-size:0.9rem; color:#8b949e; margin-top:-0.5rem; margin-bottom:0.5rem;">{_escape(alert["one_line_explanation"] or "")}</p>',
         unsafe_allow_html=True,
     )
+    outcome_priority_expl = (alert.get("outcome_priority_explanation") or "").strip()
+    if outcome_priority_expl and outcome_priority_expl != "No outcome-based adjustment.":
+        st.caption(f"**Queue:** {outcome_priority_expl}")
     # Predictive explanation (defensible, regulator-safe copy); use Outcome Similarity agent when available
     outcome_ag = agent_results.get("outcome_similarity") or {}
     if "_error" not in outcome_ag and outcome_ag.get("similar_confirmed_cases_count") is not None:
@@ -697,15 +814,9 @@ if selected_id:
         with c2:
             st.metric("Deposit count", alert.get("num_deposits_90d") or 12)
             st.metric("Avg cycle (days)", f"{float(alert.get('deposit_withdraw_cycle_days_avg') or 3.1):.1f}")
-        st.caption("Last 5 transactions")
+        st.caption("Transaction summary (90d)")
         st.dataframe(
-            [
-                {"Date": "2025-01-16", "Type": "Deposit", "Amount": 15000, "Status": "Completed"},
-                {"Date": "2025-01-15", "Type": "Withdrawal", "Amount": 4800, "Status": "Completed"},
-                {"Date": "2025-01-15", "Type": "Deposit", "Amount": 5000, "Status": "Completed"},
-                {"Date": "2025-01-14", "Type": "Withdrawal", "Amount": 3200, "Status": "Completed"},
-                {"Date": "2025-01-12", "Type": "Deposit", "Amount": 8000, "Status": "Completed"},
-            ],
+            get_transactions(selected_id, alert),
             use_container_width=True,
             hide_index=True,
         )
@@ -730,7 +841,7 @@ if selected_id:
             st.metric("Last login", "2025-01-16 09:00")
         st.caption("Access by country")
         st.dataframe(
-            [{"Country": "GB", "Sessions": 8}, {"Country": "NL", "Sessions": 12}, {"Country": "DE", "Sessions": 4}],
+            get_geo_activity(selected_id, alert),
             use_container_width=True,
             hide_index=True,
         )
@@ -757,7 +868,7 @@ if selected_id:
             st.metric("Declared income", f"£{inc:,.0f}" if inc is not None else "£45,000")
         st.caption("Identity checks")
         st.dataframe(
-            [{"Check": "ID document", "Result": "Pass"}, {"Check": "Face match", "Result": "Below threshold"}, {"Check": "Address", "Result": "Pass"}],
+            get_identity_signals(selected_id, alert),
             use_container_width=True,
             hide_index=True,
         )
@@ -784,18 +895,17 @@ if selected_id:
             st.metric("Same device as fraud", "Yes")
         st.caption("Device & IP summary")
         st.dataframe(
-            [{"Device ID": "DEV-F-0042", "Accounts": 8}, {"IP (hash)": "IP-F-0012", "Accounts": 4}],
+            get_network_signals(selected_id, alert),
             use_container_width=True,
             hide_index=True,
         )
         st.markdown("**Network graph** (hover for labels)")
-        net_html = _build_network_graph_html(
-            account_id=selected_id,
-            devices=[{"id": "DEV-F-0042", "accounts": 8, "fraud_linked": True}],
-            ips=[{"id": "IP-F-0012", "accounts": 4, "fraud_linked": False}, {"id": "IP-F-0008", "accounts": 2, "fraud_linked": True}],
-        )
+        network_graph = get_account_network(selected_id)
+        net_html = _build_network_graph_html_from_graph(network_graph, height=420)
         if net_html:
             st.components.v1.html(net_html, height=420, scrolling=False)
+            if not network_graph.get("edges"):
+                st.caption("No network links detected")
         else:
             st.caption("Install pyvis for interactive graph: pip install pyvis")
     with tab_similar:

@@ -4,8 +4,11 @@ Alert queue for the fraud investigation dashboard.
 Returns alerts sorted by risk descending. Each alert has:
 - account_id, fraud_probability, risk_level (High/Medium/Low), one_line_explanation.
 Uses backend/data/anomaly_scores.csv when present; otherwise mock data.
+Each alert includes outcome_adjusted_priority and outcome_priority_explanation for outcome-informed sort.
 """
 from pathlib import Path
+
+from backend.services.priority import compute_outcome_adjusted_priority
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ANOMALY_CSV = DATA_DIR / "anomaly_scores.csv"
@@ -92,7 +95,7 @@ def get_alerts(limit: int = 50) -> list[dict]:
                     return [float(r.get(c, 0)) for c in FEATURE_COLS if c in r]
                 except (TypeError, ValueError):
                     return None
-            return [
+            out = [
                 {
                     "account_id": r["account_id"],
                     "fraud_probability": float(r["fraud_probability"]),
@@ -106,6 +109,11 @@ def get_alerts(limit: int = 50) -> list[dict]:
                 }
                 for r in rows
             ]
+            for a in out:
+                pri = compute_outcome_adjusted_priority(a)
+                a["outcome_adjusted_priority"] = pri["outcome_adjusted_priority"]
+                a["outcome_priority_explanation"] = pri["outcome_priority_explanation"]
+            return out
         except Exception:
             pass
     return _mock_alerts()
@@ -131,7 +139,7 @@ def _mock_alerts() -> list[dict]:
         for c in FEATURE_COLS:
             base[c] = None
         return base
-    return [
+    out = [
         _m("ACC-F-00106", 0.72, 0.89, "High", "Elevated VPN use, deposits vs income mismatch, shared device.", ["Most logins came from a hidden or private network (VPN), which can be used to hide location.", "Money going in is much higher than the stated income, which is unusual.", "This account shares a device with several other accounts, which is common in organised abuse.", "Money is being moved in and out very quickly instead of being held, which can indicate layering."]),
         _m("ACC-F-00042", 0.65, 0.91, "High", "Rapid deposit-withdrawal cycle, shared device, multiple countries.", ["Money is being moved in and out very quickly instead of being held, which can indicate layering.", "This account shares a device with several other accounts, which is common in organised abuse.", "Logins from many different countries in a short time, which is unusual for a single user."]),
         _m("ACC-F-00088", 0.58, 0.85, "Medium", "Deposits vs income mismatch, elevated VPN use.", ["Money going in is much higher than the stated income, which is unusual.", "Most logins came from a hidden or private network (VPN), which can be used to hide location."]),
@@ -139,3 +147,8 @@ def _mock_alerts() -> list[dict]:
         _m("ACC-L-02336", 0.22, 0.44, "Low", "Slightly elevated anomaly score; within range.", ["Some small differences from typical behavior; may be normal variation."]),
         _m("ACC-L-02403", 0.12, 0.18, "Low", "Low risk; routine review.", ["Routine check; no strong risk factors identified."]),
     ]
+    for a in out:
+        pri = compute_outcome_adjusted_priority(a)
+        a["outcome_adjusted_priority"] = pri["outcome_adjusted_priority"]
+        a["outcome_priority_explanation"] = pri["outcome_priority_explanation"]
+    return out

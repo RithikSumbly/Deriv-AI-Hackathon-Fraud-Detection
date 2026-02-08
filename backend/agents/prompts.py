@@ -26,6 +26,7 @@ Rules:
 - Network + outcome similarity increase priority
 - Use cautious, regulator-safe language
 - Always explain reasoning
+- If specialist agents disagree materially (e.g. high transaction risk but low identity risk), explicitly call this out in key_drivers or investigation_summary using language like "Signals are mixed" or "Some indicators suggest benign behavior."
 
 Output JSON with:
 - risk_level

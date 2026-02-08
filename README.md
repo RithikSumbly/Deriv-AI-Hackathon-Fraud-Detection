@@ -24,7 +24,8 @@
 - **If an LLM agent fails:** The pipeline degrades gracefully. Each Evidence tab shows a warning for the failed agent and still displays model-only metrics (fraud probability, anomaly score, risk level, one-line explanation, risk factors). Other tabs and the Orchestrator can still run with partial specialist outputs.
 - **If no API key:** The system falls back to model-only and template explanations. Alert explanation, report writer, next-step advisor, and timeline builder use template fallbacks so demos work without an LLM. The UI shows model scores and risk factors from the classifier and anomaly detector.
 - **If signals conflict:** The Orchestrator is instructed to use cautious, regulator-safe language and not to treat any single signal as proof of fraud. Optional: the orchestrator prompt can be extended to explicitly require stating when specialist findings conflict (e.g. in key_drivers or investigation_summary).
-- **Auto-resolve is conservative and reversible with audit log:** Only a suggestion is shown (“Consider dismissing as false positive?”) when pattern matches historical legitimate behavior; the investigator must click “Dismiss as false positive” and provide a **required** reason. Every decision (Confirm Fraud, Mark Legit, Dismiss as false positive) is stored in `backend/data/investigator_feedback.json` with account_id, decision, reason, timestamp, investigator_id, and model_version for audit. A **Reopen case** button moves a closed case (False Positive, Marked Legit, or Confirmed Fraud) back to Under Review; the reopen action is logged in the same feedback file for audit.
+- **Auto-resolve is conservative and reversible with audit log:** Only a suggestion is shown (“Consider dismissing as false positive?”) when pattern matches historical legitimate behavior; the investigator must click “Dismiss as false positive” and provide a **required** reason. Every decision (Confirm Fraud, Mark Legit, Dismiss as false positive) is stored in `backend/data/investigator_feedback.json` with account_id, decision, reason, timestamp, investigator_id, and model_version for audit. Each decision stores the fraud (and anomaly) model version active at decision time, enabling post-hoc analysis of model drift and audit review. A **Reopen case** button moves a closed case (False Positive, Marked Legit, or Confirmed Fraud) back to Under Review; the reopen action is logged in the same feedback file for audit.
+- **Access control (out of scope):** Authentication, role-based access control, and investigator permissions are out of scope for this prototype but assumed in a production deployment.
 
 ---
 
@@ -212,7 +213,7 @@ Only the **Orchestrator** talks to the UI; **specialists** run in sequence and t
 
 ## Frontend (dashboard)
 
-- **Layout:** Hero title | left sidebar (cases, filter/sort, select case) | main area (case summary, actions, case details, “Why flagged”, 30s summary, Evidence tabs, Timeline, Next steps, Report).
+- **Layout:** Hero title | left sidebar (cases, filter/sort, select case; **API keys** expander to set Gemini/OpenAI keys without editing .env) | main area (case summary, actions, case details, “Why flagged”, 30s summary, Evidence tabs, Timeline, Next steps, Report).
 - **Entry:** `frontend/app.py`; run with `streamlit run frontend/app.py` from project root.
 - **Actions:** Confirm Fraud, Mark Legit, Request More Info, Dismiss as false positive (with required reason), Next case, Run investigation agents, Run investigation to see summary (when no 30s summary yet).
 
@@ -244,7 +245,8 @@ Only the **Orchestrator** talks to the UI; **specialists** run in sequence and t
 
 Copy `.env.example` to `.env`. Important:
 
-- **LLM:** Set `GOOGLE_API_KEY` (Gemini) or `OPENAI_API_KEY` (OpenAI). Optional: `GOOGLE_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`.
+- **LLM:** Set `GOOGLE_API_KEY` (Gemini) or `OPENAI_API_KEY` (OpenAI). Optional: `GOOGLE_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`. You can also set API keys in the dashboard: open the **API keys** expander in the left sidebar and enter your keys there (they override .env and are not stored on the server).
 - **Optional:** `AGENT_CALL_DELAY_SECONDS` (e.g. 6) to pace agent calls; `INVESTIGATOR_ID`, `FRAUD_MODEL_VERSION` for audit trail.
+- **Optional (Network tab):** `NEO4J_URI` (e.g. `bolt://localhost:7687`), `NEO4J_USER`, `NEO4J_PASSWORD`. If set and the graph is populated (run `python -m backend.scripts.neo4j_load_network`), the Network tab uses Neo4j for device/IP links; otherwise the dashboard uses CSV-based data with no Neo4j required.
 
 See `.env.example` for full list.

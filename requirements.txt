@@ -18,5 +18,5 @@ shap>=0.43.0
 openai>=1.0.0
 google-generativeai>=0.3.0
 
-# Optional: Neo4j graph features
-# neo4j>=5.0.0
+# Optional: Neo4j for network tab (device/IP graph). If not installed or NEO4J_URI unset, CSV fallback is used.
+neo4j>=5.0.0
