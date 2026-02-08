@@ -20,24 +20,40 @@ from backend.explainability.llm_client import call_llm_with_error
 
 
 def _extract_json(text: str | None) -> dict | None:
-    """Extract a JSON object from LLM response (handles markdown code blocks)."""
+    """Extract a JSON object from LLM response (handles markdown code blocks and common LLM slips)."""
     if not text or not text.strip():
         return None
     text = text.strip()
-    # Try raw parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+
+    def try_parse(raw: str) -> dict | None:
+        if not raw:
+            return None
+        raw = raw.strip()
+        # Remove trailing commas before } or ] (common LLM mistake)
+        raw = re.sub(r",\s*([}\]])", r"\1", raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+
+    parsed = try_parse(text)
+    if parsed:
+        return parsed
     # Try ```json ... ``` or ``` ... ```
     for pattern in (r"```(?:json)?\s*([\s\S]*?)\s*```", r"\{[\s\S]*\}"):
         match = re.search(pattern, text)
         if match:
-            raw = (match.group(1).strip() if match.lastindex else match.group(0))
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                continue
+            raw = match.group(1).strip() if match.lastindex else match.group(0)
+            parsed = try_parse(raw)
+            if parsed:
+                return parsed
+    # Try first { to last } (outermost object)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        parsed = try_parse(text[start : end + 1])
+        if parsed:
+            return parsed
     return None
 
 

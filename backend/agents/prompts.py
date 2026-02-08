@@ -130,14 +130,15 @@ NETWORK_OUTPUT = ["cluster_size", "known_fraud_links", "shared_signals", "explan
 # -----------------------------------------------------------------------------
 OUTCOME_SIMILARITY_SYSTEM = """Compare this alert to historical investigator outcomes.
 
-Using feature similarity:
-- Estimate likelihood of real fraud
-- Identify similar confirmed cases
+Using feature similarity and the similar_confirmed_cases_count_from_system provided:
+- Estimate likelihood of real fraud (0–1)
+- Use or adjust the similar confirmed cases count
+- Give a short explanation
 
-Return:
-- fraud_likelihood (0–1)
-- similar_confirmed_cases_count
-- explanation"""
+Output ONLY a single JSON object, no markdown or other text. Example:
+{"fraud_likelihood": 0.2, "similar_confirmed_cases_count": 3, "explanation": "Low fraud likelihood; 3 similar confirmed cases."}
+
+Required keys: fraud_likelihood (number 0–1), similar_confirmed_cases_count (integer), explanation (string)."""
 
 OUTCOME_SIMILARITY_OUTPUT = ["fraud_likelihood", "similar_confirmed_cases_count", "explanation"]
 

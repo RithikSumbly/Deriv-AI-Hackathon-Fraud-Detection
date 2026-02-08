@@ -28,7 +28,6 @@ try:
 except ImportError:
     HAS_PYVIS = False
 
-
 def _build_network_graph_html(
     account_id: str,
     devices: list[dict],
@@ -109,10 +108,22 @@ def _build_network_graph_html(
         return None
 
 
+def _short_node_label(full_label: str, max_chars: int = 10) -> str:
+    """Shorten node label for display; full id remains in title (hover)."""
+    if not full_label or len(full_label) <= max_chars:
+        return full_label
+    if full_label.startswith("ACC-"):
+        return full_label[-8:] if len(full_label) > 8 else full_label
+    if full_label.startswith("DEV-") or full_label.startswith("IP-"):
+        return full_label[-6:] if len(full_label) > 6 else full_label
+    return full_label[: max_chars - 2] + ".." if len(full_label) > max_chars else full_label
+
+
 def _build_network_graph_html_from_graph(graph: dict, height: int = 400) -> str | None:
     """
-    Build interactive network from backend graph: nodes (primary_account, other_account, device, ip)
-    and edges (account -> device, account -> ip). Distinct visuals per type.
+    Build interactive network from backend graph with fixed hierarchical layout:
+    level 0 = primary account, level 1 = devices & IPs, level 2 = linked accounts.
+    Physics disabled so the graph is stable and not jumbled.
     """
     if not HAS_PYVIS:
         return None
@@ -125,26 +136,37 @@ def _build_network_graph_html_from_graph(graph: dict, height: int = 400) -> str 
         heading="",
         cdn_resources="remote",
     )
-    net.barnes_hut(
-        gravity=0.2,
-        central_gravity=0.3,
-        spring_length=150,
-        spring_strength=0.05,
-        damping=0.09,
+    net.set_options(
+        """
+        {
+          "layout": {
+            "hierarchical": {
+              "enabled": true,
+              "direction": "UD",
+              "levelSeparation": 120,
+              "nodeSpacing": 100,
+              "sortMethod": "directed"
+            }
+          },
+          "physics": { "enabled": false }
+        }
+        """
     )
     for n in nodes:
         nid = n.get("id", "?")
-        label = n.get("label", nid)
+        full_label = n.get("label", nid)
         ntype = n.get("type", "")
-        title = f"{ntype}\n{label}"
+        title = f"{ntype}\n{full_label}"
+        label = full_label if ntype == "primary_account" else _short_node_label(full_label, 10)
+        level = 0 if ntype == "primary_account" else (1 if ntype in ("device", "ip") else 2)
         if ntype == "primary_account":
-            net.add_node(nid, label=label, title=title, color="#1a73e8", size=35, font={"size": 14})
+            net.add_node(nid, label=label, title=title, color="#1a73e8", size=32, font={"size": 13}, level=level)
         elif ntype == "other_account":
-            net.add_node(nid, label=label, title=title, color="#f57c00", size=22, font={"size": 12})
+            net.add_node(nid, label=label, title=title, color="#f57c00", size=18, font={"size": 10}, level=level)
         elif ntype == "device":
-            net.add_node(nid, label=label, title=title, color="#78909c", size=25, font={"size": 12}, shape="box")
+            net.add_node(nid, label=label, title=title, color="#78909c", size=20, font={"size": 10}, shape="box", level=level)
         else:
-            net.add_node(nid, label=label, title=title, color="#78909c", size=25, font={"size": 12}, shape="dot")
+            net.add_node(nid, label=label, title=title, color="#78909c", size=20, font={"size": 10}, shape="dot", level=level)
     for e in edges:
         src = e.get("source")
         tgt = e.get("target")
@@ -899,13 +921,15 @@ if selected_id:
             use_container_width=True,
             hide_index=True,
         )
-        st.markdown("**Network graph** (hover for labels)")
         network_graph = get_account_network(selected_id)
-        net_html = _build_network_graph_html_from_graph(network_graph, height=420)
+        st.markdown("**Network graph** (pan/zoom)")
+        net_html = _build_network_graph_html_from_graph(network_graph, height=500)
         if net_html:
-            st.components.v1.html(net_html, height=420, scrolling=False)
+            st.components.v1.html(net_html, height=500, scrolling=False)
             if not network_graph.get("edges"):
                 st.caption("No network links detected")
+            elif network_graph.get("truncated"):
+                st.caption(network_graph.get("truncated_message", "Graph capped for readability."))
         else:
             st.caption("Install pyvis for interactive graph: pip install pyvis")
     with tab_similar:

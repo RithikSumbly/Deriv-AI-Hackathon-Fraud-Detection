@@ -203,6 +203,10 @@ def _load_mappings() -> tuple[dict[str, list[tuple[str, str]]], dict[str, list[s
     return account_devices_ips, device_to_accounts, ip_to_accounts
 
 
+# Cap on linked accounts in CSV fallback so the graph stays readable (avoids dense balls)
+_MAX_OTHER_ACCOUNTS_CSV = 18
+
+
 def _get_account_network_csv(account_id: str) -> dict:
     """CSV-based implementation (fallback when Neo4j is not available)."""
     account_id = str(account_id).strip()
@@ -236,6 +240,10 @@ def _get_account_network_csv(account_id: str) -> dict:
             if acc != account_id:
                 other_accounts.add(acc)
 
+    truncated = len(other_accounts) > _MAX_OTHER_ACCOUNTS_CSV
+    if truncated:
+        other_accounts = set(sorted(other_accounts)[:_MAX_OTHER_ACCOUNTS_CSV])
+
     all_devices: set[str] = set(devices_used)
     all_ips: set[str] = set(ips_used)
     for acc in other_accounts:
@@ -263,7 +271,11 @@ def _get_account_network_csv(account_id: str) -> dict:
                 seen.add((acc, i))
                 edges.append({"source": acc, "target": i, "relationship": "logged from"})
 
-    return {"nodes": nodes, "edges": edges}
+    out = {"nodes": nodes, "edges": edges}
+    if truncated:
+        out["truncated"] = True
+        out["truncated_message"] = f"Showing first {_MAX_OTHER_ACCOUNTS_CSV} linked accounts; hover nodes for full IDs (more exist)."
+    return out
 
 
 def get_account_network(account_id: str) -> dict:

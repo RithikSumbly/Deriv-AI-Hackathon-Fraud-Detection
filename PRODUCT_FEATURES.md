@@ -59,6 +59,7 @@ A single reference of all features in this product, derived from the codebase an
 | **One-line explanation** | From alert (model/rule-based); shown under metrics. |
 | **Queue / outcome explanation** | Caption “Queue: Prioritised…” or “De-prioritised…” when outcome_priority_explanation is set and not neutral. |
 | **Why this account was flagged** | When agents have run: Orchestrator key_drivers + investigation_summary, confidence (High/Medium/Low), priority (1–5). When no agents: risk_factors as bullets + confidence from fraud probability. |
+| **Risk level and narrative consistency** | The likelihood phrase under the metrics (“High composite risk”, “Moderate…”, “Lower likelihood of real fraud”) and the confidence in “Why this account was flagged” are aligned with the displayed **Risk level**. When Risk level is High, the UI never shows “Lower likelihood of real fraud”; it shows “High composite risk” and, when fraud probability is low, explains that anomaly or network signals raised the composite risk. Confidence (when no orchestrator) is at least Medium when risk level is High, so “Low confidence / may be normal variation” is not shown for High-risk cases. |
 | **30s Copilot Summary** | Short investigation_summary from Orchestrator when available; else button “Run investigation to see summary”. |
 
 ### 2.5 Evidence tabs
@@ -68,7 +69,7 @@ A single reference of all features in this product, derived from the codebase an
 | **Transactions** | Transaction agent output (anomaly score, short_explanation, detected_patterns); metrics (total deposits/withdrawals 90d, deposit count, avg cycle); **real** transaction summary table from backend (deposit_count_90d, withdrawal_count_90d, deposits_vs_income_ratio, avg_deposit_amount, deposit_withdraw_cycle_days_avg) via `get_transactions(account_id, alert)`. |
 | **Access & Geo** | Geo agent output (geo_risk, explanation, indicators); metrics (countries, VPN %, distinct IPs, last login); **real** geo table (countries_accessed_count, vpn_usage_pct, high_risk_country_flag) via `get_geo_activity(account_id, alert)`. |
 | **Identity** | Identity agent output (identity_risk, explanation, indicators); metrics (KYC face match, Doc verified, account age, declared income); **real** identity table (kyc_face_match_score, document_verified, identity_risk_level) via `get_identity_signals(account_id, alert)`. |
-| **Network** | Network agent output (cluster_size, known_fraud_links, explanation, shared_signals); metrics (devices linked, accounts on same device, IPs linked); **real** device/IP table (device_shared_count, ip_shared_count) via `get_network_signals(account_id, alert)`; **interactive network graph** (Pyvis) from `get_account_network(account_id)` — primary account, other accounts, devices, IPs; “No network links detected” when no edges. |
+| **Network** | Network agent output (cluster_size, known_fraud_links, explanation, shared_signals); metrics (devices linked, accounts on same device, IPs linked); **real** device/IP table (device_shared_count, ip_shared_count) via `get_network_signals(account_id, alert)`. **Fraud ring flowchart** (Mermaid): shown only when the account has shared devices or IPs (i.e. is part of a fraud ring); built from same `get_account_network(account_id)` data; subgraphs for Selected account, Linked accounts, Shared devices, Shared IPs; capped at 6 linked accounts, 4 devices, 4 IPs for readability; uses streamlit-mermaid when installed, else HTML fallback + “View flowchart code” expander. **Interactive fraud ring graph** (pan/zoom): Pyvis hierarchical flowchart from `get_account_network(account_id)` — primary account, other accounts, devices, IPs; “No network links detected” when no edges. The flowchart block is omitted when there are no edges so the tab is not blank. |
 | **Similar Cases** | Outcome similarity agent (fraud_likelihood, similar_confirmed_cases_count, explanation); fallback to `get_similar_confirmed_count(risk_level, feature_vector)` when agent errors; caption on outcome-informed sort. |
 
 ### 2.6 Timeline
@@ -165,6 +166,7 @@ Investigation agent outputs are **cached per account_id**. Re-running “Run inv
 | **LLM keys** | GOOGLE_API_KEY or OPENAI_API_KEY (or set in sidebar). Without keys, template/fallback explanations and reports; agents can still run if keys set in UI. |
 | **AGENT_CALL_DELAY_SECONDS** | Optional pacing between agent calls. |
 | **INVESTIGATOR_ID, FRAUD_MODEL_VERSION** | Stored with each decision for audit. |
+| **streamlit-mermaid** | Optional. When installed, the Network tab uses it to render the fraud ring flowchart (Mermaid). Without it, the app falls back to HTML iframe + expander with flowchart code. |
 
 **Model version traceability** — Each investigator decision stores the fraud model version (and investigator_id) active at decision time, enabling post-hoc analysis of model performance drift and audit review.
 
